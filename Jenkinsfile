@@ -1,29 +1,34 @@
 pipeline {
-    agent {
-        docker {
-            image 'python:3.11'
-            args '-u root:root'
-        }
+    agent any
+
+    environment {
+        CONDA_DIR = "${WORKSPACE}/miniconda"
+        PATH = "${CONDA_DIR}/bin:${env.PATH}"
     }
 
     stages {
 
-        stage('Checkout') {
+        stage('Setup Python (Local)') {
             steps {
-                echo 'Checking out source code from GitHub...'
-                checkout scm
+                sh '''
+                echo "Downloading Miniconda..."
+                wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+                bash miniconda.sh -b -p $CONDA_DIR
+                conda init bash
+                conda --version
+                '''
             }
         }
 
-        stage('Setup Python Environment') {
+        stage('Create Virtual Environment') {
             steps {
-                echo 'Setting up Python virtual environment...'
                 sh '''
-                python -m venv venv
-                . venv/bin/activate
+                conda create -y -n ci-env python=3.11
+                source $CONDA_DIR/bin/activate ci-env
+                python --version
                 pip install --upgrade pip
                 pip install -r requirements.txt
-                pip install pytest pytest-html pytest-cov
+                pip install pytest pytest-html pytest-cov pyinstaller
                 mkdir -p test-reports
                 '''
             }
@@ -31,9 +36,8 @@ pipeline {
 
         stage('Build / Compile Check') {
             steps {
-                echo 'Checking Python syntax...'
                 sh '''
-                . venv/bin/activate
+                source $CONDA_DIR/bin/activate ci-env
                 python -m py_compile app.py
                 '''
             }
@@ -41,9 +45,8 @@ pipeline {
 
         stage('Unit Test') {
             steps {
-                echo 'Running unit tests with pytest...'
                 sh '''
-                . venv/bin/activate
+                source $CONDA_DIR/bin/activate ci-env
                 pytest test.py \
                   --junitxml=test-reports/results.xml \
                   --html=test-reports/report.html \
@@ -52,9 +55,7 @@ pipeline {
             }
             post {
                 always {
-                    echo 'Archiving test results...'
                     junit allowEmptyResults: true, testResults: 'test-reports/results.xml'
-
                     publishHTML(target: [
                         allowMissing: true,
                         alwaysLinkToLastBuild: true,
@@ -73,7 +74,7 @@ pipeline {
             echo 'Python CI Pipeline completed successfully!'
         }
         failure {
-            echo 'Pipeline failed. Please check the test results.'
+            echo 'Pipeline failed. Please check the logs.'
         }
     }
 }
