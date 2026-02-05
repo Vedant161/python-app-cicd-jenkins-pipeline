@@ -1,9 +1,13 @@
 pipeline {
-    agent any
+    agent {
+        docker {
+            image 'python:3.11'
+            args '-u root:root'   // avoids permission issues
+        }
+    }
 
     environment {
         VENV = "venv"
-        PYTHON = "python3"
     }
 
     stages {
@@ -12,7 +16,7 @@ pipeline {
             steps {
                 sh '''
                 echo "********* Cleaning Workspace Stage Started **********"
-                rm -rf test-reports dist build
+                rm -rf test-reports dist build ${VENV}
                 mkdir -p test-reports
                 echo "********* Cleaning Workspace Stage Finished **********"
                 '''
@@ -22,7 +26,7 @@ pipeline {
         stage('Setup Environment') {
             steps {
                 sh """
-                ${PYTHON} -m venv ${VENV}
+                python -m venv ${VENV}
                 . ${VENV}/bin/activate
                 pip install --upgrade pip
                 pip install -r requirements.txt
@@ -83,7 +87,7 @@ pipeline {
 
             archiveArtifacts artifacts: 'dist/*', fingerprint: true
 
-            junit 'test-reports/results.xml'
+            junit allowEmptyResults: true, testResults: 'test-reports/results.xml'
 
             publishHTML(target: [
                 allowMissing: true,
