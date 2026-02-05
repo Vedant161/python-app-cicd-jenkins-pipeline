@@ -2,119 +2,78 @@ pipeline {
     agent {
         docker {
             image 'python:3.11'
-            args '-u root:root'   // avoids permission issues
+            args '-u root:root'
         }
-    }
-
-    environment {
-        VENV = "venv"
     }
 
     stages {
 
-        stage('Clean Reports') {
+        stage('Checkout') {
             steps {
+                echo 'Checking out source code from GitHub...'
+                checkout scm
+            }
+        }
+
+        stage('Setup Python Environment') {
+            steps {
+                echo 'Setting up Python virtual environment...'
                 sh '''
-                echo "********* Cleaning Workspace Stage Started **********"
-                rm -rf test-reports dist build ${VENV}
+                python -m venv venv
+                . venv/bin/activate
+                pip install --upgrade pip
+                pip install -r requirements.txt
+                pip install pytest pytest-html pytest-cov
                 mkdir -p test-reports
-                echo "********* Cleaning Workspace Stage Finished **********"
                 '''
             }
         }
 
-        stage('Setup Environment') {
+        stage('Build / Compile Check') {
             steps {
-                sh """
-                python -m venv ${VENV}
-                . ${VENV}/bin/activate
-                pip install --upgrade pip
-                pip install -r requirements.txt
-                pip install pytest pytest-html pytest-cov pyinstaller
-                """
+                echo 'Checking Python syntax...'
+                sh '''
+                . venv/bin/activate
+                python -m py_compile app.py
+                '''
             }
         }
 
-        stage('Build Stage') {
+        stage('Unit Test') {
             steps {
-                sh """
-                echo '********* Build Stage Started **********'
-                . ${VENV}/bin/activate
-                pyinstaller --onefile app.py
-                echo '********* Build Stage Finished **********'
-                """
-            }
-        }
-
-        stage('Testing Stage') {
-            steps {
-                sh """
-                echo '********* Test Stage Started **********'
-                . ${VENV}/bin/activate
+                echo 'Running unit tests with pytest...'
+                sh '''
+                . venv/bin/activate
                 pytest test.py \
                   --junitxml=test-reports/results.xml \
                   --html=test-reports/report.html \
                   --self-contained-html
-                echo '********* Test Stage Finished **********'
-                """
+                '''
             }
-        }
+            post {
+                always {
+                    echo 'Archiving test results...'
+                    junit allowEmptyResults: true, testResults: 'test-reports/results.xml'
 
-        stage('Sanity Approval') {
-            steps {
-                input message: "Does the staging environment look OK?"
-            }
-        }
-
-        stage('Deployment Approval') {
-            steps {
-                input message: "Do you want to deploy the application?"
-            }
-        }
-
-        stage('Deployment Stage') {
-            steps {
-                echo '********* Deploy Stage Started **********'
-                sh "echo 'Deploying build artifact... (replace with real deploy command)'"
-                echo '********* Deploy Stage Finished **********'
+                    publishHTML(target: [
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'test-reports',
+                        reportFiles: 'report.html',
+                        reportName: 'Pytest HTML Report'
+                    ])
+                }
             }
         }
     }
 
     post {
-        always {
-            echo 'We came to an end!'
-
-            archiveArtifacts artifacts: 'dist/*', fingerprint: true
-
-            junit allowEmptyResults: true, testResults: 'test-reports/results.xml'
-
-            publishHTML(target: [
-                allowMissing: true,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: 'test-reports',
-                reportFiles: 'report.html',
-                reportName: 'Pytest HTML Report'
-            ])
-
-            deleteDir()
-        }
-
         success {
-            echo 'Build Successful!! 🎉'
+            echo 'Python CI Pipeline completed successfully!'
         }
-
         failure {
-            echo 'Build Failed. Check logs & test reports.'
-        }
-
-        unstable {
-            echo 'Run was marked as UNSTABLE'
-        }
-
-        changed {
-            echo 'Pipeline state has changed.'
+            echo 'Pipeline failed. Please check the test results.'
         }
     }
 }
